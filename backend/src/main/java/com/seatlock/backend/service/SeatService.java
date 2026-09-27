@@ -10,9 +10,14 @@ import java.util.List;
 public class SeatService {
 
     private final SeatRepository seatRepository;
+    private final SeatLockService seatLockService;
 
-    public SeatService(SeatRepository seatRepository) {
+    public SeatService(
+            SeatRepository seatRepository,
+            SeatLockService seatLockService) {
+
         this.seatRepository = seatRepository;
+        this.seatLockService = seatLockService;
     }
 
     public List<Seat> getSeatsByEventId(Integer eventId) {
@@ -46,5 +51,41 @@ public class SeatService {
         }
 
         return seats;
+    }
+
+    public Seat lockSeat(Integer seatId) {
+
+        Seat seat = seatRepository.findById(seatId)
+                .orElseThrow(() -> new RuntimeException("Seat not found"));
+
+        // Release an expired lock
+        if ("LOCKED".equals(seat.getStatus())
+                && seat.getLockedUntil() != null
+                && seat.getLockedUntil().isBefore(java.time.LocalDateTime.now())) {
+
+            seat.setStatus("AVAILABLE");
+            seat.setLockedUntil(null);
+            seatRepository.save(seat);
+        }
+
+        // Check availability after releasing an expired lock
+        if (!"AVAILABLE".equals(seat.getStatus())) {
+            throw new RuntimeException("Seat is not available");
+        }
+
+        boolean locked = seatLockService.lockSeat(seatId);
+
+        if (!locked) {
+            throw new RuntimeException(
+                    "Seat is currently being locked by another user"
+            );
+        }
+
+        seat.setStatus("LOCKED");
+        seat.setLockedUntil(
+                java.time.LocalDateTime.now().plusMinutes(10)
+        );
+
+        return seatRepository.save(seat);
     }
 }

@@ -37,4 +37,9 @@ public class SeatController {
 
         return seatService.generateSeats(eventId, rows, seatsPerRow);
     }
+
+    @PutMapping("/api/v1/seats/{seatId}/lock")
+    public Seat lockSeat(@PathVariable Integer seatId) {
+        return seatService.lockSeat(seatId);
+    }
 }

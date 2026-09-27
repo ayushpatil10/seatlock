@@ -16,6 +16,8 @@ public class Seat {
 
     private String status;
 
+    private java.time.LocalDateTime lockedUntil;
+
     public Seat() {
     }
 
@@ -52,5 +54,13 @@ public class Seat {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public java.time.LocalDateTime getLockedUntil() {
+        return lockedUntil;
+    }
+
+    public void setLockedUntil(java.time.LocalDateTime lockedUntil) {
+        this.lockedUntil = lockedUntil;
     }
 }
