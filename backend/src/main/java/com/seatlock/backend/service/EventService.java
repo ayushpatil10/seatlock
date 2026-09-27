@@ -30,4 +30,7 @@ public class EventService {
                         )
                 );
     }
+    public Event createEvent(Event event) {
+        return eventRepository.save(event);
+    }
 }

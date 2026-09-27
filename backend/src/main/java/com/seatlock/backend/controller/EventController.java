@@ -5,6 +5,8 @@ import com.seatlock.backend.service.EventService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
@@ -25,5 +27,10 @@ public class EventController {
     @GetMapping("/api/v1/events/{eventId}")
     public Event getEvent(@PathVariable int eventId) {
         return eventService.getEventById(eventId);
+    }
+
+    @PostMapping("/api/v1/events")
+    public Event createEvent(@RequestBody Event event) {
+        return eventService.createEvent(event);
     }
 }

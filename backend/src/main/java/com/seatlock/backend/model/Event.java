@@ -12,7 +12,7 @@ public class Event {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private int id;
+    private Integer id;
 
     private String title;
     private String language;
@@ -22,7 +22,7 @@ public class Event {
     public Event() {
     }
 
-    public Event(int id, String title, String language, String location, String date) {
+    public Event(Integer id, String title, String language, String location, String date) {
         this.id = id;
         this.title = title;
         this.language = language;
@@ -30,7 +30,7 @@ public class Event {
         this.date = date;
     }
 
-    public int getId() {
+    public Integer getId() {
         return id;
     }
 
@@ -48,5 +48,21 @@ public class Event {
 
     public String getDate() {
         return date;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public void setLanguage(String language) {
+        this.language = language;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    public void setDate(String date) {
+        this.date = date;
     }
 }
