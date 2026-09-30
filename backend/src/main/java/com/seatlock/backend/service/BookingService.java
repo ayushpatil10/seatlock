@@ -61,4 +61,38 @@ public class BookingService {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
     }
+
+    @Transactional
+    public Booking cancelBooking(Integer bookingId) {
+        // Find the booking
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
+
+        // If booking status is already CANCELLED, return 409
+        if ("CANCELLED".equals(booking.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Booking is already cancelled");
+        }
+
+        // Find the associated seat with Pessimistic Lock
+        Seat seat = seatRepository.findByIdForUpdate(booking.getSeatId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Seat not found"));
+
+        // Verify that the seat belongs to the booking's event
+        if (!seat.getEventId().equals(booking.getEventId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seat does not belong to this event");
+        }
+
+        // Change booking status to CANCELLED
+        booking.setStatus("CANCELLED");
+
+        // Change seat status from BOOKED to AVAILABLE
+        seat.setStatus("AVAILABLE");
+
+        // Release the Redis lock for that seat
+        seatLockService.unlockSeat(seat.getId());
+
+        // Save the seat and booking transactionally
+        seatRepository.save(seat);
+        return bookingRepository.save(booking);
+    }
 }

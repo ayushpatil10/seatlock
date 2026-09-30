@@ -26,4 +26,10 @@ public class BookingController {
         Booking booking = bookingService.getBookingById(bookingId);
         return ResponseEntity.ok(booking);
     }
+
+    @DeleteMapping("/{bookingId}")
+    public ResponseEntity<Booking> cancelBooking(@PathVariable Integer bookingId) {
+        Booking cancelledBooking = bookingService.cancelBooking(bookingId);
+        return ResponseEntity.ok(cancelledBooking);
+    }
 }
