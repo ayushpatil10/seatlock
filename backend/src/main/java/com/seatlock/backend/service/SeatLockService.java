@@ -23,4 +23,9 @@ public class SeatLockService {
 
         return Boolean.TRUE.equals(locked);
     }
+
+    public void unlockSeat(Integer seatId) {
+        String key = "seat:lock:" + seatId;
+        redisTemplate.delete(key);
+    }
 }
