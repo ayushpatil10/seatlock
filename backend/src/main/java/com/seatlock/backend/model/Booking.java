@@ -20,16 +20,20 @@ public class Booking {
 
     private LocalDateTime createdAt;
 
+    @Column(unique = true)
+    private String idempotencyKey;
+
     public Booking() {
     }
 
     public Booking(Integer id, Integer seatId, Integer eventId,
-                   String status, LocalDateTime createdAt) {
+                   String status, LocalDateTime createdAt, String idempotencyKey) {
         this.id = id;
         this.seatId = seatId;
         this.eventId = eventId;
         this.status = status;
         this.createdAt = createdAt;
+        this.idempotencyKey = idempotencyKey;
     }
 
     public Integer getId() {
@@ -66,6 +70,14 @@ public class Booking {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     @PrePersist

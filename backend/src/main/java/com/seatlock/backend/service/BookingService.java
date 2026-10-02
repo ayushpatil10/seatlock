@@ -28,10 +28,28 @@ public class BookingService {
     @Transactional
     public Booking createBooking(Booking booking) {
         
+        // 1. Idempotency Check Requirements
+        if (booking.getIdempotencyKey() == null || booking.getIdempotencyKey().trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency key is required");
+        }
+
+        // Fast path query (non-blocking)
+        java.util.Optional<Booking> existingBooking = bookingRepository.findByIdempotencyKey(booking.getIdempotencyKey());
+        if (existingBooking.isPresent()) {
+            return existingBooking.get();
+        }
+
         // Find the seat by seatId with Pessimistic Lock
         Seat seat = seatRepository.findByIdForUpdate(booking.getSeatId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Seat not found"));
         
+        // 2. Double-check Idempotency after acquiring the DB lock.
+        // If two equivalent requests hit this exact line sequentially, the latter safely escapes natively!
+        existingBooking = bookingRepository.findByIdempotencyKey(booking.getIdempotencyKey());
+        if (existingBooking.isPresent()) {
+            return existingBooking.get();
+        }
+
         // Verify the seat belongs to the requested event
         if (!seat.getEventId().equals(booking.getEventId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seat does not belong to this event");
@@ -52,9 +70,17 @@ public class BookingService {
         seat.setStatus("BOOKED");
         seatRepository.save(seat);
 
-        // Booking fields: id, seatId, eventId, status, createdAt
+        // Booking fields: id, seatId, eventId, status, createdAt, idempotencyKey
         booking.setStatus("PENDING");
-        return bookingRepository.save(booking);
+        
+        try {
+            return bookingRepository.saveAndFlush(booking);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Transaction is marked for rollback! Do not attempt further DB queries.
+            // Absolute catch-all safety net for completely different seatIds using identically malformed Idempotency constraints
+            seatLockService.unlockSeat(booking.getSeatId());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Concurrent idempotency conflict detected");
+        }
     }
 
     public Booking getBookingById(Integer bookingId) {
