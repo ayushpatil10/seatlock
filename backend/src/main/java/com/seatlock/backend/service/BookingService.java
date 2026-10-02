@@ -53,7 +53,7 @@ public class BookingService {
         seatRepository.save(seat);
 
         // Booking fields: id, seatId, eventId, status, createdAt
-        booking.setStatus("CONFIRMED");
+        booking.setStatus("PENDING");
         return bookingRepository.save(booking);
     }
 
@@ -61,11 +61,52 @@ public class BookingService {
         return bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
     }
+    
+    @Transactional
+    public Booking confirmBooking(Integer bookingId) {
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
+
+        if (!"PENDING".equals(booking.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING bookings can be confirmed");
+        }
+
+        if (booking.getCreatedAt().plusMinutes(10).isBefore(java.time.LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Booking hold has expired");
+        }
+
+        booking.setStatus("CONFIRMED");
+        return bookingRepository.save(booking);
+    }
+    
+    @Transactional
+    public Booking expireBooking(Integer bookingId) {
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
+
+        if (!"PENDING".equals(booking.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING bookings can be expired");
+        }
+
+        if (booking.getCreatedAt().plusMinutes(10).isAfter(java.time.LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Booking hold period has not yet expired");
+        }
+
+        Seat seat = seatRepository.findByIdForUpdate(booking.getSeatId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Seat not found"));
+
+        booking.setStatus("EXPIRED");
+        seat.setStatus("AVAILABLE");
+        seatLockService.unlockSeat(seat.getId());
+
+        seatRepository.save(seat);
+        return bookingRepository.save(booking);
+    }
 
     @Transactional
     public Booking cancelBooking(Integer bookingId) {
-        // Find the booking
-        Booking booking = bookingRepository.findById(bookingId)
+        // Find the booking with Pessimistic Lock
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
 
         // If booking status is already CANCELLED, return 409

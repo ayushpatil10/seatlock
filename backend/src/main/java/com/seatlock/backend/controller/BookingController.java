@@ -32,4 +32,16 @@ public class BookingController {
         Booking cancelledBooking = bookingService.cancelBooking(bookingId);
         return ResponseEntity.ok(cancelledBooking);
     }
+
+    @PostMapping("/{bookingId}/confirm")
+    public ResponseEntity<Booking> confirmBooking(@PathVariable Integer bookingId) {
+        Booking confirmedBooking = bookingService.confirmBooking(bookingId);
+        return ResponseEntity.ok(confirmedBooking);
+    }
+
+    @PostMapping("/{bookingId}/expire")
+    public ResponseEntity<Booking> expireBooking(@PathVariable Integer bookingId) {
+        Booking expiredBooking = bookingService.expireBooking(bookingId);
+        return ResponseEntity.ok(expiredBooking);
+    }
 }
