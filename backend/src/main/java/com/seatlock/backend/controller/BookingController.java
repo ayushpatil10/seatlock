@@ -2,8 +2,10 @@ package com.seatlock.backend.controller;
 
 import com.seatlock.backend.model.Booking;
 import com.seatlock.backend.service.BookingService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/v1/bookings")
@@ -17,6 +19,21 @@ public class BookingController {
 
     @PostMapping
     public ResponseEntity<Booking> createBooking(@RequestBody Booking booking) {
+        // Validate seatId: must be non-null and positive
+        if (booking.getSeatId() == null || booking.getSeatId() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "seatId must be a positive integer");
+        }
+
+        // Validate eventId: must be non-null and positive
+        if (booking.getEventId() == null || booking.getEventId() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "eventId must be a positive integer");
+        }
+
+        // Validate idempotencyKey: must be non-null and non-blank
+        if (booking.getIdempotencyKey() == null || booking.getIdempotencyKey().trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "idempotencyKey must not be blank");
+        }
+
         Booking savedBooking = bookingService.createBooking(booking);
         return ResponseEntity.ok(savedBooking);
     }
