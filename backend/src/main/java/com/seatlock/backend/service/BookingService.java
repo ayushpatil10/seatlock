@@ -3,6 +3,7 @@ package com.seatlock.backend.service;
 import com.seatlock.backend.model.Booking;
 import com.seatlock.backend.model.Seat;
 import com.seatlock.backend.repository.BookingRepository;
+import com.seatlock.backend.repository.EventRepository;
 import com.seatlock.backend.repository.SeatRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -15,14 +16,17 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final SeatRepository seatRepository;
     private final SeatLockService seatLockService;
+    private final EventRepository eventRepository;
 
     public BookingService(
             BookingRepository bookingRepository,
             SeatRepository seatRepository,
-            SeatLockService seatLockService) {
+            SeatLockService seatLockService,
+            EventRepository eventRepository) {
         this.bookingRepository = bookingRepository;
         this.seatRepository = seatRepository;
         this.seatLockService = seatLockService;
+        this.eventRepository = eventRepository;
     }
 
     @Transactional
@@ -48,6 +52,11 @@ public class BookingService {
         existingBooking = bookingRepository.findByIdempotencyKey(booking.getIdempotencyKey());
         if (existingBooking.isPresent()) {
             return existingBooking.get();
+        }
+
+        // Verify the event exists
+        if (!eventRepository.existsById(booking.getEventId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found");
         }
 
         // Verify the seat belongs to the requested event
