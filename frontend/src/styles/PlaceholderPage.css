@@ -1,0 +1,14 @@
+.placeholder-page {
+  padding: 64px 0;
+  text-align: center;
+}
+
+.placeholder-page__title {
+  margin-bottom: 8px;
+}
+
+.placeholder-page__text {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  margin-bottom: 24px;
+}
