@@ -144,9 +144,18 @@ public class BookingService {
         Booking booking = bookingRepository.findByIdForUpdate(bookingId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Booking not found"));
 
-        // If booking status is already CANCELLED, return 409
-        if ("CANCELLED".equals(booking.getStatus())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Booking is already cancelled");
+        // Only PENDING bookings can be cancelled
+        if (!"PENDING".equals(booking.getStatus())) {
+            if ("CANCELLED".equals(booking.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Booking is already cancelled");
+            }
+            if ("CONFIRMED".equals(booking.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot cancel a confirmed booking");
+            }
+            if ("EXPIRED".equals(booking.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot cancel an expired booking");
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING bookings can be cancelled");
         }
 
         // Find the associated seat with Pessimistic Lock
