@@ -9,6 +9,8 @@ import {
 import type { Booking } from '../types';
 import '../styles/BookingStatusPage.css';
 
+const POLLING_INTERVAL_MS = 15000;
+
 /** Map booking status to a badge CSS modifier */
 function statusBadgeClass(status: string): string {
   switch (status) {
@@ -42,6 +44,10 @@ export default function BookingStatusPage() {
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
+  // Polling state
+  const [isChecking, setIsChecking] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
   // Action state
   const [actionInProgress, setActionInProgress] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -61,6 +67,7 @@ export default function BookingStatusPage() {
     fetchBooking(bookingId)
       .then((data) => {
         setBooking(data);
+        setLastUpdated(new Date());
         setLoading(false);
       })
       .catch((err) => {
@@ -77,6 +84,51 @@ export default function BookingStatusPage() {
     loadBooking();
   }, [loadBooking]);
 
+  // Automatic polling while booking status is PENDING
+  const isPending = booking?.status === 'PENDING';
+
+  useEffect(() => {
+    if (!isPending || isNaN(bookingId) || bookingId <= 0) {
+      return;
+    }
+
+    let isMounted = true;
+    let inFlight = false;
+
+    const pollStatus = async () => {
+      // Prevent overlapping requests or polling during user-triggered confirm/cancel
+      if (inFlight || actionInProgress) {
+        return;
+      }
+
+      inFlight = true;
+      setIsChecking(true);
+
+      try {
+        const latestBooking = await fetchBooking(bookingId);
+        if (isMounted) {
+          setBooking(latestBooking);
+          setLastUpdated(new Date());
+        }
+      } catch (err) {
+        // Handle temporary network/API errors without crashing or clearing booking status
+        console.warn('Booking status polling encountered an error:', err);
+      } finally {
+        if (isMounted) {
+          setIsChecking(false);
+          inFlight = false;
+        }
+      }
+    };
+
+    const intervalId = setInterval(pollStatus, POLLING_INTERVAL_MS);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [bookingId, isPending, actionInProgress]);
+
   const handleConfirm = useCallback(async () => {
     if (actionInProgress) return;
     setActionError(null);
@@ -86,6 +138,7 @@ export default function BookingStatusPage() {
     try {
       const updated = await confirmBooking(bookingId);
       setBooking(updated);
+      setLastUpdated(new Date());
       setActionSuccess('Booking confirmed successfully!');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -107,6 +160,7 @@ export default function BookingStatusPage() {
     try {
       const updated = await cancelBooking(bookingId);
       setBooking(updated);
+      setLastUpdated(new Date());
       setActionSuccess('Booking cancelled. The seat has been released.');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -173,8 +227,6 @@ export default function BookingStatusPage() {
 
   if (!booking) return null;
 
-  const isPending = booking.status === 'PENDING';
-
   return (
     <div className="booking-status">
       <div className="container">
@@ -184,7 +236,24 @@ export default function BookingStatusPage() {
 
         <div className="booking-card" id="booking-card">
           <div className="booking-card__header">
-            <h1 className="booking-card__title">Booking #{booking.id}</h1>
+            <div>
+              <h1 className="booking-card__title">Booking #{booking.id}</h1>
+              {isPending && (
+                <div className="booking-status__indicator" id="booking-polling-indicator">
+                  <span
+                    className={`polling-dot ${isChecking ? 'polling-dot--active' : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span className="booking-status__indicator-text">
+                    {isChecking
+                      ? 'Checking booking status...'
+                      : lastUpdated
+                      ? `Last updated: ${lastUpdated.toLocaleTimeString()}`
+                      : 'Checking booking status...'}
+                  </span>
+                </div>
+              )}
+            </div>
             <span className={statusBadgeClass(booking.status)}>
               {booking.status}
             </span>
@@ -241,6 +310,13 @@ export default function BookingStatusPage() {
           {actionSuccess && (
             <div className="booking-card__success" id="booking-action-success">
               {actionSuccess}
+            </div>
+          )}
+
+          {/* Background expiration notice */}
+          {booking.status === 'EXPIRED' && !actionSuccess && (
+            <div className="booking-card__info-banner booking-card__info-banner--expired" id="booking-expired-banner">
+              This booking has expired because it was not confirmed within the hold window. The seat has been released.
             </div>
           )}
         </div>
