@@ -153,6 +153,25 @@ class BookingServiceTest {
     // --- cancelBooking tests ---
 
     @Test
+    void cancelBooking_pendingBooking_succeeds() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-p");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+
+        Booking savedBooking = new Booking(1, 1, 10, "CANCELLED", null, "key-p");
+        when(bookingRepository.save(any(Booking.class))).thenReturn(savedBooking);
+
+        Booking result = bookingService.cancelBooking(1);
+
+        assertEquals("CANCELLED", result.getStatus());
+        assertEquals("AVAILABLE", bookedSeat.getStatus());
+        verify(seatLockService).unlockSeat(1);
+        verify(seatRepository).save(bookedSeat);
+    }
+
+    @Test
     void cancelBooking_alreadyCancelled_throws409() {
         Booking cancelled = new Booking(1, 1, 10, "CANCELLED", null, "key-x");
         when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(cancelled));
@@ -162,5 +181,81 @@ class BookingServiceTest {
 
         assertEquals(409, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Booking is already cancelled"));
+    }
+
+    @Test
+    void cancelBooking_confirmedBooking_throws409() {
+        Booking confirmed = new Booking(1, 1, 10, "CONFIRMED", null, "key-c");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(confirmed));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.cancelBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Cannot cancel a confirmed booking"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+    }
+
+    @Test
+    void cancelBooking_expiredBooking_throws409() {
+        Booking expired = new Booking(1, 1, 10, "EXPIRED", null, "key-e");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(expired));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.cancelBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Cannot cancel an expired booking"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+    }
+
+    @Test
+    void cancelBooking_confirmedBooking_doesNotChangeSeatStatus() {
+        Booking confirmed = new Booking(1, 1, 10, "CONFIRMED", null, "key-c2");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(confirmed));
+
+        assertThrows(ResponseStatusException.class, () -> bookingService.cancelBooking(1));
+
+        // Seat must remain BOOKED — never touched
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatRepository, never()).save(any(Seat.class));
+    }
+
+    @Test
+    void cancelBooking_seatNotBelongToEvent_throws400() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-mismatch");
+        Seat seatDifferentEvent = new Seat(1, 99, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(seatDifferentEvent));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.cancelBooking(1));
+
+        assertEquals(400, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Seat does not belong to this event"));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void cancelBooking_seatNotFound_throws404() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-p2");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.cancelBooking(1));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Seat not found"));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
     }
 }
