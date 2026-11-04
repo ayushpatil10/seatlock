@@ -380,6 +380,22 @@ class BookingServiceTest {
         assertEquals("AVAILABLE", bookedSeat.getStatus());
         verify(seatLockService).unlockSeat(1);
         verify(seatRepository).save(bookedSeat);
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void cancelBooking_notFound_throws404() {
+        when(bookingRepository.findByIdForUpdate(999)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.cancelBooking(999));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Booking not found"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 
     @Test
@@ -392,11 +408,16 @@ class BookingServiceTest {
 
         assertEquals(409, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Booking is already cancelled"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 
     @Test
     void cancelBooking_confirmedBooking_throws409() {
         Booking confirmed = new Booking(1, 1, 10, "CONFIRMED", null, "key-c");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
         when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(confirmed));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -404,13 +425,17 @@ class BookingServiceTest {
 
         assertEquals(409, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Cannot cancel a confirmed booking"));
+        assertEquals("BOOKED", bookedSeat.getStatus());
         verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
         verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 
     @Test
     void cancelBooking_expiredBooking_throws409() {
         Booking expired = new Booking(1, 1, 10, "EXPIRED", null, "key-e");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
         when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(expired));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
@@ -418,8 +443,11 @@ class BookingServiceTest {
 
         assertEquals(409, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Cannot cancel an expired booking"));
+        assertEquals("BOOKED", bookedSeat.getStatus());
         verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
         verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 
     @Test
@@ -434,6 +462,22 @@ class BookingServiceTest {
         // Seat must remain BOOKED — never touched
         assertEquals("BOOKED", bookedSeat.getStatus());
         verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+    }
+
+    @Test
+    void cancelBooking_expiredBooking_doesNotChangeSeatStatus() {
+        Booking expired = new Booking(1, 1, 10, "EXPIRED", null, "key-e2");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(expired));
+
+        assertThrows(ResponseStatusException.class, () -> bookingService.cancelBooking(1));
+
+        // Seat must remain BOOKED — never touched
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
     }
 
     @Test
@@ -468,5 +512,6 @@ class BookingServiceTest {
         assertTrue(ex.getReason().contains("Seat not found"));
         verify(seatLockService, never()).unlockSeat(anyInt());
         verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 }
