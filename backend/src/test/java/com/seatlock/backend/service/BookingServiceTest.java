@@ -13,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -148,6 +149,216 @@ class BookingServiceTest {
 
         assertEquals(404, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Booking not found"));
+    }
+
+    // --- confirmBooking tests ---
+
+    @Test
+    void confirmBooking_pendingWithin10Minutes_succeeds() {
+        LocalDateTime recentTime = LocalDateTime.now().minusMinutes(5);
+        Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-confirm");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.confirmBooking(1);
+
+        assertEquals("CONFIRMED", result.getStatus());
+        verify(bookingRepository).save(pending);
+        verifyNoInteractions(seatLockService);
+        verify(seatRepository, never()).save(any(Seat.class));
+    }
+
+    @Test
+    void confirmBooking_expiredHold_throws400() {
+        LocalDateTime expiredTime = LocalDateTime.now().minusMinutes(11);
+        Booking pending = new Booking(1, 1, 10, "PENDING", expiredTime, "key-expired-hold");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(400, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Booking hold has expired"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_confirmedBooking_throws409() {
+        Booking confirmed = new Booking(1, 1, 10, "CONFIRMED", LocalDateTime.now().minusMinutes(2), "key-conf");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(confirmed));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be confirmed"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_cancelledBooking_throws409() {
+        Booking cancelled = new Booking(1, 1, 10, "CANCELLED", LocalDateTime.now().minusMinutes(2), "key-canc");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(cancelled));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be confirmed"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_expiredBooking_throws409() {
+        Booking expired = new Booking(1, 1, 10, "EXPIRED", LocalDateTime.now().minusMinutes(15), "key-exp");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(expired));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be confirmed"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_notFound_throws404() {
+        when(bookingRepository.findByIdForUpdate(999)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(999));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Booking not found"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    // --- expireBooking tests ---
+
+    @Test
+    void expireBooking_pendingOlderThan10Minutes_succeeds() {
+        LocalDateTime oldTime = LocalDateTime.now().minusMinutes(11);
+        Booking pending = new Booking(1, 1, 10, "PENDING", oldTime, "key-expire");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.expireBooking(1);
+
+        assertEquals("EXPIRED", result.getStatus());
+        assertEquals("AVAILABLE", bookedSeat.getStatus());
+        verify(seatLockService).unlockSeat(1);
+        verify(seatRepository).save(bookedSeat);
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void expireBooking_within10MinuteWindow_throws400() {
+        LocalDateTime recentTime = LocalDateTime.now().minusMinutes(5);
+        Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-recent");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(1));
+
+        assertEquals(400, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Booking hold period has not yet expired"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_confirmedBooking_throws409() {
+        Booking confirmed = new Booking(1, 1, 10, "CONFIRMED", LocalDateTime.now().minusMinutes(15), "key-c-exp");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(confirmed));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be expired"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_cancelledBooking_throws409() {
+        Booking cancelled = new Booking(1, 1, 10, "CANCELLED", LocalDateTime.now().minusMinutes(15), "key-can-exp");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(cancelled));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be expired"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_alreadyExpired_throws409() {
+        Booking expired = new Booking(1, 1, 10, "EXPIRED", LocalDateTime.now().minusMinutes(20), "key-alr-exp");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(expired));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Only PENDING bookings can be expired"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_notFound_throws404() {
+        when(bookingRepository.findByIdForUpdate(999)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(999));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Booking not found"));
+        verify(seatRepository, never()).findByIdForUpdate(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_seatNotFound_throws404() {
+        LocalDateTime oldTime = LocalDateTime.now().minusMinutes(12);
+        Booking pending = new Booking(1, 1, 10, "PENDING", oldTime, "key-no-seat");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.expireBooking(1));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Seat not found"));
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository, never()).save(any(Booking.class));
     }
 
     // --- cancelBooking tests ---
