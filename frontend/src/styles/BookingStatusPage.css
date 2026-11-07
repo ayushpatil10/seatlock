@@ -88,6 +88,7 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   margin-top: 4px;
+  flex-wrap: wrap;
 }
 
 .polling-dot {
@@ -97,6 +98,7 @@
   background-color: var(--color-success);
   display: inline-block;
   transition: background-color 0.2s ease, transform 0.2s ease;
+  flex-shrink: 0;
 }
 
 .polling-dot--active {
@@ -113,6 +115,12 @@
     opacity: 1;
     transform: scale(1.15);
   }
+}
+
+.booking-status__last-updated {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.85;
 }
 
 /* Details grid */
@@ -169,13 +177,25 @@
   color: var(--color-success);
 }
 
-/* Background expiration notice */
+/* Status notice banners */
 
 .booking-card__info-banner {
   margin-top: 16px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
+}
+
+.booking-card__info-banner--confirmed {
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  color: var(--color-success);
+}
+
+.booking-card__info-banner--cancelled {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: var(--color-danger);
 }
 
 .booking-card__info-banner--expired {

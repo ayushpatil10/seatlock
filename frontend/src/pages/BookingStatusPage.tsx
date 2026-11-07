@@ -107,11 +107,17 @@ export default function BookingStatusPage() {
       try {
         const latestBooking = await fetchBooking(bookingId);
         if (isMounted) {
-          setBooking(latestBooking);
+          setBooking((prev) => {
+            // Prevent stale polling responses from reverting a terminal booking status back to PENDING
+            if (prev && prev.status !== 'PENDING' && latestBooking.status === 'PENDING') {
+              return prev;
+            }
+            return latestBooking;
+          });
           setLastUpdated(new Date());
         }
       } catch (err) {
-        // Handle temporary network/API errors without crashing or clearing booking status
+        // Handle temporary network/API errors gracefully: keep previous state and allow subsequent polls
         console.warn('Booking status polling encountered an error:', err);
       } finally {
         if (isMounted) {
@@ -126,11 +132,14 @@ export default function BookingStatusPage() {
     return () => {
       isMounted = false;
       clearInterval(intervalId);
+      setIsChecking(false);
     };
   }, [bookingId, isPending, actionInProgress]);
 
+  const isActionDisabled = actionInProgress || isChecking;
+
   const handleConfirm = useCallback(async () => {
-    if (actionInProgress) return;
+    if (actionInProgress || isChecking) return;
     setActionError(null);
     setActionSuccess(null);
     setActionInProgress(true);
@@ -149,10 +158,10 @@ export default function BookingStatusPage() {
     } finally {
       setActionInProgress(false);
     }
-  }, [bookingId, actionInProgress]);
+  }, [bookingId, actionInProgress, isChecking]);
 
   const handleCancel = useCallback(async () => {
-    if (actionInProgress) return;
+    if (actionInProgress || isChecking) return;
     setActionError(null);
     setActionSuccess(null);
     setActionInProgress(true);
@@ -171,7 +180,7 @@ export default function BookingStatusPage() {
     } finally {
       setActionInProgress(false);
     }
-  }, [bookingId, actionInProgress]);
+  }, [bookingId, actionInProgress, isChecking]);
 
   /* ── Loading ─────────────────────────────────────────── */
 
@@ -247,10 +256,13 @@ export default function BookingStatusPage() {
                   <span className="booking-status__indicator-text">
                     {isChecking
                       ? 'Checking booking status...'
-                      : lastUpdated
-                      ? `Last updated: ${lastUpdated.toLocaleTimeString()}`
-                      : 'Checking booking status...'}
+                      : 'Checking booking status automatically every 15 seconds'}
                   </span>
+                  {lastUpdated && !isChecking && (
+                    <span className="booking-status__last-updated">
+                      (Last updated: {lastUpdated.toLocaleTimeString()})
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -284,7 +296,7 @@ export default function BookingStatusPage() {
                 type="button"
                 className="btn btn--primary"
                 id="confirm-booking-btn"
-                disabled={actionInProgress}
+                disabled={isActionDisabled}
                 onClick={handleConfirm}
               >
                 {actionInProgress ? 'Processing…' : 'Confirm Booking'}
@@ -293,7 +305,7 @@ export default function BookingStatusPage() {
                 type="button"
                 className="btn btn--danger"
                 id="cancel-booking-btn"
-                disabled={actionInProgress}
+                disabled={isActionDisabled}
                 onClick={handleCancel}
               >
                 {actionInProgress ? 'Processing…' : 'Cancel Booking'}
@@ -313,7 +325,19 @@ export default function BookingStatusPage() {
             </div>
           )}
 
-          {/* Background expiration notice */}
+          {/* Final status notices when no longer PENDING */}
+          {booking.status === 'CONFIRMED' && !actionSuccess && (
+            <div className="booking-card__info-banner booking-card__info-banner--confirmed" id="booking-confirmed-banner">
+              This booking is confirmed. Your seat is secured!
+            </div>
+          )}
+
+          {booking.status === 'CANCELLED' && !actionSuccess && (
+            <div className="booking-card__info-banner booking-card__info-banner--cancelled" id="booking-cancelled-banner">
+              This booking has been cancelled. The seat has been released.
+            </div>
+          )}
+
           {booking.status === 'EXPIRED' && !actionSuccess && (
             <div className="booking-card__info-banner booking-card__info-banner--expired" id="booking-expired-banner">
               This booking has expired because it was not confirmed within the hold window. The seat has been released.
