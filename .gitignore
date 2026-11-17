@@ -6,3 +6,11 @@ node_modules/
 .env
 *.log
 backend/build-output.txt
+
+# Python & Load Testing
+.venv/
+load-test/.venv/
+load-test/results/
+results/
+__pycache__/
+*.pyc
