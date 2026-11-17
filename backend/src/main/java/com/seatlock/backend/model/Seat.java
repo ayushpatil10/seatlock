@@ -3,15 +3,22 @@ package com.seatlock.backend.model;
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "seats")
+@Table(
+    name = "seats",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_seats_event_seat_number", columnNames = {"event_id", "seat_number"})
+    }
+)
 public class Seat {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
+    @Column(name = "event_id")
     private Integer eventId;
 
+    @Column(name = "seat_number")
     private String seatNumber;
 
     private String status;
