@@ -2,6 +2,8 @@ package com.seatlock.backend.service;
 
 import com.seatlock.backend.model.Booking;
 import com.seatlock.backend.repository.BookingRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +12,8 @@ import java.util.List;
 
 @Component
 public class BookingExpiryScheduler {
+
+    private static final Logger log = LoggerFactory.getLogger(BookingExpiryScheduler.class);
 
     private final BookingService bookingService;
     private final BookingRepository bookingRepository;
@@ -22,7 +26,7 @@ public class BookingExpiryScheduler {
     @Scheduled(fixedRate = 60000)
     public void autoExpireBookings() {
         LocalDateTime tenMinsAgo = LocalDateTime.now().minusMinutes(10);
-        List<Booking> expiredBookings = bookingRepository.findByStatusAndCreatedAtBefore("PENDING", tenMinsAgo);
+        List<Booking> expiredBookings = bookingRepository.findByStatusAndCreatedAtBeforeOrCreatedAtIsNull("PENDING", tenMinsAgo);
         
         for (Booking b : expiredBookings) {
             try {
@@ -30,7 +34,7 @@ public class BookingExpiryScheduler {
                 bookingService.expireBooking(b.getId());
             } catch (Exception e) {
                 // Log and gracefully continue
-                System.err.println("Failed to automatically expire booking " + b.getId() + ": " + e.getMessage());
+                log.error("Failed to automatically expire booking {}: {}", b.getId(), e.getMessage());
             }
         }
     }

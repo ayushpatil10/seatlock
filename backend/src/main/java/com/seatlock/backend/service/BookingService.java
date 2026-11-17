@@ -5,13 +5,20 @@ import com.seatlock.backend.model.Seat;
 import com.seatlock.backend.repository.BookingRepository;
 import com.seatlock.backend.repository.EventRepository;
 import com.seatlock.backend.repository.SeatRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+
 @Service
 public class BookingService {
+
+    private static final Logger log = LoggerFactory.getLogger(BookingService.class);
+    private static final List<String> ACTIVE_BOOKING_STATUSES = List.of("CONFIRMED", "PENDING");
 
     private final BookingRepository bookingRepository;
     private final SeatRepository seatRepository;
@@ -106,8 +113,21 @@ public class BookingService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING bookings can be confirmed");
         }
 
+        if (booking.getCreatedAt() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Booking creation timestamp is missing; cannot confirm hold");
+        }
+
         if (booking.getCreatedAt().plusMinutes(10).isBefore(java.time.LocalDateTime.now())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Booking hold has expired");
+        }
+
+        // Acquire the associated seat with Pessimistic Lock to serialize concurrent confirmation/cancellation operations for this seat
+        Seat seat = seatRepository.findByIdForUpdate(booking.getSeatId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Seat not found"));
+
+        // Protect against double-selling: verify no other booking has already CONFIRMED this seat
+        if (bookingRepository.existsBySeatIdAndStatusInAndIdNot(booking.getSeatId(), List.of("CONFIRMED"), booking.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Seat is already confirmed by another booking");
         }
 
         booking.setStatus("CONFIRMED");
@@ -123,7 +143,9 @@ public class BookingService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only PENDING bookings can be expired");
         }
 
-        if (booking.getCreatedAt().plusMinutes(10).isAfter(java.time.LocalDateTime.now())) {
+        // If createdAt is present, enforce the 10-minute hold window.
+        // If createdAt is null (legacy untimestamped booking), treat hold as expired so it can reach terminal state.
+        if (booking.getCreatedAt() != null && booking.getCreatedAt().plusMinutes(10).isAfter(java.time.LocalDateTime.now())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Booking hold period has not yet expired");
         }
 
@@ -131,10 +153,20 @@ public class BookingService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Seat not found"));
 
         booking.setStatus("EXPIRED");
-        seat.setStatus("AVAILABLE");
-        seatLockService.unlockSeat(seat.getId());
 
-        seatRepository.save(seat);
+        // Check if another active booking (CONFIRMED or PENDING) still references this seat
+        boolean hasOtherActiveBooking = bookingRepository.existsBySeatIdAndStatusInAndIdNot(
+                seat.getId(), ACTIVE_BOOKING_STATUSES, booking.getId());
+
+        if (!hasOtherActiveBooking) {
+            seat.setStatus("AVAILABLE");
+            seatLockService.unlockSeat(seat.getId());
+            seatRepository.save(seat);
+        } else {
+            log.warn("Seat ID {} has other active booking(s); not releasing seat upon expiry of booking ID {}",
+                    seat.getId(), booking.getId());
+        }
+
         return bookingRepository.save(booking);
     }
 
@@ -170,14 +202,24 @@ public class BookingService {
         // Change booking status to CANCELLED
         booking.setStatus("CANCELLED");
 
-        // Change seat status from BOOKED to AVAILABLE
-        seat.setStatus("AVAILABLE");
+        // Check if another active booking (CONFIRMED or PENDING) still references this seat
+        boolean hasOtherActiveBooking = bookingRepository.existsBySeatIdAndStatusInAndIdNot(
+                seat.getId(), ACTIVE_BOOKING_STATUSES, booking.getId());
 
-        // Release the Redis lock for that seat
-        seatLockService.unlockSeat(seat.getId());
+        if (!hasOtherActiveBooking) {
+            // Change seat status from BOOKED to AVAILABLE
+            seat.setStatus("AVAILABLE");
 
-        // Save the seat and booking transactionally
-        seatRepository.save(seat);
+            // Release the Redis lock for that seat
+            seatLockService.unlockSeat(seat.getId());
+
+            // Save the seat transactionally
+            seatRepository.save(seat);
+        } else {
+            log.warn("Seat ID {} has other active booking(s); not releasing seat upon cancellation of booking ID {}",
+                    seat.getId(), booking.getId());
+        }
+
         return bookingRepository.save(booking);
     }
 }

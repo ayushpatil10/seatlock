@@ -14,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -159,11 +160,13 @@ class BookingServiceTest {
         Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-confirm");
 
         when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(availableSeat));
         when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Booking result = bookingService.confirmBooking(1);
 
         assertEquals("CONFIRMED", result.getStatus());
+        verify(seatRepository).findByIdForUpdate(1);
         verify(bookingRepository).save(pending);
         verifyNoInteractions(seatLockService);
         verify(seatRepository, never()).save(any(Seat.class));
@@ -236,6 +239,64 @@ class BookingServiceTest {
         assertEquals(404, ex.getStatusCode().value());
         assertTrue(ex.getReason().contains("Booking not found"));
         verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_nullCreatedAt_throws400() {
+        Booking pendingNullDate = new Booking(1, 1, 10, "PENDING", null, "key-confirm-null");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pendingNullDate));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(400, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("creation timestamp is missing"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_seatAlreadyConfirmedByAnotherBooking_throws409() {
+        LocalDateTime recentTime = LocalDateTime.now().minusMinutes(2);
+        Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-confirm-conflict");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(availableSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED"), 1)).thenReturn(true);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Seat is already confirmed by another booking"));
+        verify(seatRepository).findByIdForUpdate(1);
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_seatNotFound_throws404() {
+        LocalDateTime recentTime = LocalDateTime.now().minusMinutes(2);
+        Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-seat-404");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> bookingService.confirmBooking(1));
+
+        assertEquals(404, ex.getStatusCode().value());
+        assertTrue(ex.getReason().contains("Seat not found"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void confirmBooking_acquiresSeatPessimisticLock() {
+        LocalDateTime recentTime = LocalDateTime.now().minusMinutes(3);
+        Booking pending = new Booking(1, 1, 10, "PENDING", recentTime, "key-lock");
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(availableSeat));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        bookingService.confirmBooking(1);
+
+        verify(seatRepository).findByIdForUpdate(1);
     }
 
     // --- expireBooking tests ---
@@ -359,6 +420,84 @@ class BookingServiceTest {
         verify(seatLockService, never()).unlockSeat(anyInt());
         verify(seatRepository, never()).save(any(Seat.class));
         verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void expireBooking_otherBookingConfirmed_doesNotReleaseSeat() {
+        LocalDateTime oldTime = LocalDateTime.now().minusMinutes(11);
+        Booking pending = new Booking(1, 1, 10, "PENDING", oldTime, "key-exp-other-conf");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(true);
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.expireBooking(1);
+
+        assertEquals("EXPIRED", result.getStatus());
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void expireBooking_otherBookingPending_doesNotReleaseSeat() {
+        LocalDateTime oldTime = LocalDateTime.now().minusMinutes(11);
+        Booking pending = new Booking(1, 1, 10, "PENDING", oldTime, "key-exp-other-pend");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(true);
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.expireBooking(1);
+
+        assertEquals("EXPIRED", result.getStatus());
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void expireBooking_nullCreatedAt_noOtherActiveBooking_releasesSeat() {
+        Booking pendingNullTime = new Booking(1, 1, 10, "PENDING", null, "key-exp-null-time");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pendingNullTime));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(false);
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.expireBooking(1);
+
+        assertEquals("EXPIRED", result.getStatus());
+        assertEquals("AVAILABLE", bookedSeat.getStatus());
+        verify(seatLockService).unlockSeat(1);
+        verify(seatRepository).save(bookedSeat);
+        verify(bookingRepository).save(pendingNullTime);
+    }
+
+    @Test
+    void expireBooking_nullCreatedAt_otherBookingActive_doesNotReleaseSeat() {
+        Booking pendingNullTime = new Booking(1, 1, 10, "PENDING", null, "key-exp-null-active");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pendingNullTime));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(true);
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Booking result = bookingService.expireBooking(1);
+
+        assertEquals("EXPIRED", result.getStatus());
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository).save(pendingNullTime);
     }
 
     // --- cancelBooking tests ---
@@ -513,5 +652,68 @@ class BookingServiceTest {
         verify(seatLockService, never()).unlockSeat(anyInt());
         verify(seatRepository, never()).save(any(Seat.class));
         verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void cancelBooking_otherBookingConfirmed_doesNotReleaseSeat() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-cancel-conf");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(true);
+
+        Booking savedBooking = new Booking(1, 1, 10, "CANCELLED", null, "key-cancel-conf");
+        when(bookingRepository.save(any(Booking.class))).thenReturn(savedBooking);
+
+        Booking result = bookingService.cancelBooking(1);
+
+        assertEquals("CANCELLED", result.getStatus());
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void cancelBooking_otherBookingPending_doesNotReleaseSeat() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-cancel-pend");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(true);
+
+        Booking savedBooking = new Booking(1, 1, 10, "CANCELLED", null, "key-cancel-pend");
+        when(bookingRepository.save(any(Booking.class))).thenReturn(savedBooking);
+
+        Booking result = bookingService.cancelBooking(1);
+
+        assertEquals("CANCELLED", result.getStatus());
+        assertEquals("BOOKED", bookedSeat.getStatus());
+        verify(seatLockService, never()).unlockSeat(anyInt());
+        verify(seatRepository, never()).save(any(Seat.class));
+        verify(bookingRepository).save(pending);
+    }
+
+    @Test
+    void cancelBooking_noOtherActiveBooking_releasesSeat() {
+        Booking pending = new Booking(1, 1, 10, "PENDING", null, "key-cancel-clean");
+        Seat bookedSeat = new Seat(1, 10, "A1", "BOOKED");
+
+        when(bookingRepository.findByIdForUpdate(1)).thenReturn(Optional.of(pending));
+        when(seatRepository.findByIdForUpdate(1)).thenReturn(Optional.of(bookedSeat));
+        when(bookingRepository.existsBySeatIdAndStatusInAndIdNot(1, List.of("CONFIRMED", "PENDING"), 1)).thenReturn(false);
+
+        Booking savedBooking = new Booking(1, 1, 10, "CANCELLED", null, "key-cancel-clean");
+        when(bookingRepository.save(any(Booking.class))).thenReturn(savedBooking);
+
+        Booking result = bookingService.cancelBooking(1);
+
+        assertEquals("CANCELLED", result.getStatus());
+        assertEquals("AVAILABLE", bookedSeat.getStatus());
+        verify(seatLockService).unlockSeat(1);
+        verify(seatRepository).save(bookedSeat);
+        verify(bookingRepository).save(pending);
     }
 }
